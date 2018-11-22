@@ -17,6 +17,7 @@ import (
 	uio "gx/ipfs/Qmbvw7kpSM2p6rbQ57WGRhhqNfCiNGW6EKH4xgHLw4bsnB/go-unixfs/io"
 	unixfspb "gx/ipfs/Qmbvw7kpSM2p6rbQ57WGRhhqNfCiNGW6EKH4xgHLw4bsnB/go-unixfs/pb"
 	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
+	cidenc "gx/ipfs/QmdPQx9fvN5ExVwMhRmh7YpCQJzJrFhd1AjVBwJmRMFJeX/go-cidutil/cidenc"
 	merkledag "gx/ipfs/QmdV35UHnL1FM52baPkeUo6u7Fxm2CRUkPTLRPxeF8a4Ap/go-merkledag"
 	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
 )
@@ -91,8 +92,12 @@ The JSON output contains type information.
 		if err != nil {
 			return err
 		}
-
 		paths := req.Arguments
+
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
 
 		var dagnodes []ipld.Node
 		for _, fpath := range paths {
@@ -131,7 +136,7 @@ The JSON output contains type information.
 				}
 				outputLinks := make([]LsLink, len(links))
 				for j, link := range links {
-					lsLink, err := makeLsLink(req, dserv, resolve, link)
+					lsLink, err := makeLsLink(req, dserv, resolve, link, enc)
 					if err != nil {
 						return err
 					}
@@ -165,7 +170,7 @@ The JSON output contains type information.
 					return linkResult.Err
 				}
 				link := linkResult.Link
-				lsLink, err := makeLsLink(req, dserv, resolve, link)
+				lsLink, err := makeLsLink(req, dserv, resolve, link, enc)
 				if err != nil {
 					return err
 				}
@@ -224,7 +229,7 @@ func makeDagNodeLinkResults(req *cmds.Request, dagnode ipld.Node) <-chan unixfs.
 	return linkResults
 }
 
-func makeLsLink(req *cmds.Request, dserv ipld.DAGService, resolve bool, link *ipld.Link) (*LsLink, error) {
+func makeLsLink(req *cmds.Request, dserv ipld.DAGService, resolve bool, link *ipld.Link, enc cidenc.Encoder) (*LsLink, error) {
 	t := unixfspb.Data_DataType(-1)
 
 	switch link.Cid.Type() {
@@ -250,7 +255,7 @@ func makeLsLink(req *cmds.Request, dserv ipld.DAGService, resolve bool, link *ip
 	}
 	return &LsLink{
 		Name: link.Name,
-		Hash: link.Cid.String(),
+		Hash: enc.Encode(link.Cid),
 		Size: link.Size,
 		Type: t,
 	}, nil
