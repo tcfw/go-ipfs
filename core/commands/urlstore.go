@@ -111,7 +111,11 @@ time.
 			layout = trickle.Layout
 		}
 
-		root, err := layout(dbp.New(chk))
+		db, err := dbp.New(chk)
+		if err != nil {
+			return err
+		}
+		root, err := layout(db)
 		if err != nil {
 			return err
 		}
