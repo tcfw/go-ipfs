@@ -17,18 +17,22 @@ import (
 	oldcmds "github.com/ipfs/go-ipfs/commands"
 	"github.com/ipfs/go-ipfs/core"
 	commands "github.com/ipfs/go-ipfs/core/commands"
+	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
 	corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	corerepo "github.com/ipfs/go-ipfs/core/corerepo"
+	libp2p "github.com/ipfs/go-ipfs/core/node/libp2p"
 	nodeMount "github.com/ipfs/go-ipfs/fuse/node"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
 	migrate "github.com/ipfs/go-ipfs/repo/fsrepo/migrations"
 
-	ma "gx/ipfs/QmNTCey11oxhb1AxDnQBRHtdhap6Ctud872NjAYPYYXPuc/go-multiaddr"
-	"gx/ipfs/QmTQuFQWHAWy4wMH6ZyPfGiawA5u9T8rs79FENoV8yXaoS/client_golang/prometheus"
-	mprome "gx/ipfs/QmVMcMs6duiwLzvhF6xWM3yc4GgjpNoctKFhvtBch5tpgo/go-metrics-prometheus"
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	"gx/ipfs/QmZcLBXKaFe8ND5YHPkJRAwmhJGrVsi1JqDZNyJ4nRK5Mj/go-multiaddr-net"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/hashicorp/go-multierror"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	mprome "github.com/ipfs/go-metrics-prometheus"
+	goprocess "github.com/jbenet/goprocess"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/multiformats/go-multiaddr-net"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -96,8 +100,8 @@ ipfs supports passing arbitrary headers to the API and Gateway. You can
 do this by setting headers on the API.HTTPHeaders and Gateway.HTTPHeaders
 keys:
 
-  ipfs config --json API.HTTPHeaders.X-Special-Header '["so special :)"]'
-  ipfs config --json Gateway.HTTPHeaders.X-Special-Header '["so special :)"]'
+  ipfs config --json API.HTTPHeaders.X-Special-Header "[\"so special :)\"]"
+  ipfs config --json Gateway.HTTPHeaders.X-Special-Header "[\"so special :)\"]"
 
 Note that the value of the keys is an _array_ of strings. This is because
 headers can have more than one value, and it is convenient to pass through
@@ -107,9 +111,9 @@ CORS Headers (for API)
 
 You can setup CORS headers the same way:
 
-  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["example.com"]'
-  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "GET", "POST"]'
-  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Credentials '["true"]'
+  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin "[\"example.com\"]"
+  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods "[\"PUT\", \"GET\", \"POST\"]"
+  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Credentials "[\"true\"]"
 
 Shutdown
 
@@ -276,6 +280,10 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		break
 	}
 
+	// The node will also close the repo but there are many places we could
+	// fail before we get to that. It can't hurt to close it twice.
+	defer repo.Close()
+
 	cfg, err := cctx.GetConfig()
 	if err != nil {
 		return err
@@ -316,11 +324,11 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	case routingOptionSupernodeKwd:
 		return errors.New("supernode routing was never fully implemented and has been removed")
 	case routingOptionDHTClientKwd:
-		ncfg.Routing = core.DHTClientOption
+		ncfg.Routing = libp2p.DHTClientOption
 	case routingOptionDHTKwd:
-		ncfg.Routing = core.DHTOption
+		ncfg.Routing = libp2p.DHTOption
 	case routingOptionNoneKwd:
-		ncfg.Routing = core.NilRouterOption
+		ncfg.Routing = libp2p.NilRouterOption
 	default:
 		return fmt.Errorf("unrecognized routing option: %s", routingOption)
 	}
@@ -330,7 +338,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		log.Error("error from node construction: ", err)
 		return err
 	}
-	node.SetLocal(false)
+	node.IsDaemon = true
 
 	if node.PNetFingerprint != nil {
 		fmt.Println("Swarm is limited to private network of peers with the swarm key")
@@ -354,6 +362,18 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	cctx.ConstructNode = func() (*core.IpfsNode, error) {
 		return node, nil
 	}
+
+	// Start "core" plugins. We want to do this *before* starting the HTTP
+	// API as the user may be relying on these plugins.
+	api, err := coreapi.NewCoreAPI(node)
+	if err != nil {
+		return err
+	}
+	err = cctx.Plugins.Start(api)
+	if err != nil {
+		return err
+	}
+	node.Process.AddChild(goprocess.WithTeardown(cctx.Plugins.Close))
 
 	// construct api endpoint - every time
 	apiErrc, err := serveHTTPApi(req, cctx)
@@ -391,6 +411,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 	// initialize metrics collector
 	prometheus.MustRegister(&corehttp.IpfsNodeCollector{Node: node})
 
+	// The daemon is *finally* ready.
 	fmt.Printf("Daemon is ready\n")
 
 	// Give the user some immediate feedback when they hit C-c
@@ -402,13 +423,14 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 
 	// collect long-running errors and block for shutdown
 	// TODO(cryptix): our fuse currently doesnt follow this pattern for graceful shutdown
+	var errs error
 	for err := range merge(apiErrc, gwErrc, gcErrc) {
 		if err != nil {
-			return err
+			errs = multierror.Append(errs, err)
 		}
 	}
 
-	return nil
+	return errs
 }
 
 // serveHTTPApi collects options, creates listener, prints status message and starts serving requests
@@ -502,7 +524,7 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 
 // printSwarmAddrs prints the addresses of the host
 func printSwarmAddrs(node *core.IpfsNode) {
-	if !node.OnlineMode() {
+	if !node.IsOnline {
 		fmt.Println("Swarm not listening, running in offline mode.")
 		return
 	}
@@ -515,7 +537,7 @@ func printSwarmAddrs(node *core.IpfsNode) {
 	for _, addr := range ifaceAddrs {
 		lisAddrs = append(lisAddrs, addr.String())
 	}
-	sort.Sort(sort.StringSlice(lisAddrs))
+	sort.Strings(lisAddrs)
 	for _, addr := range lisAddrs {
 		fmt.Printf("Swarm listening on %s\n", addr)
 	}
@@ -524,7 +546,7 @@ func printSwarmAddrs(node *core.IpfsNode) {
 	for _, addr := range node.PeerHost.Addrs() {
 		addrs = append(addrs, addr.String())
 	}
-	sort.Sort(sort.StringSlice(addrs))
+	sort.Strings(addrs)
 	for _, addr := range addrs {
 		fmt.Printf("Swarm announcing %s\n", addr)
 	}

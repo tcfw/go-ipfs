@@ -52,6 +52,10 @@ Available profiles:
   Reduces daemon overhead on the system. May affect node functionality,
   performance of content discovery and data fetching may be degraded.
 
+- `randomports`
+
+  Generate random port for swarm.
+
 ## Table of Contents
 
 - [`Addresses`](#addresses)
@@ -220,6 +224,12 @@ Valid modes are:
 ## `Gateway`
 Options for the HTTP gateway.
 
+- `NoFetch`
+When set to true, the gateway will only serve content already in the local repo
+and will not fetch files from the network.
+
+Default: `false`
+
 - `HTTPHeaders`
 Headers to set on gateway responses.
 
@@ -243,7 +253,7 @@ A url to redirect requests for `/` to.
 
 Default: `""`
 
-- `Writeable`
+- `Writable`
 A boolean to configure whether the gateway is writeable or not.
 
 Default: `false`

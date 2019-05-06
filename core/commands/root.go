@@ -3,14 +3,15 @@ package commands
 import (
 	"errors"
 
+	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
 	dag "github.com/ipfs/go-ipfs/core/commands/dag"
 	name "github.com/ipfs/go-ipfs/core/commands/name"
 	ocmd "github.com/ipfs/go-ipfs/core/commands/object"
 	unixfs "github.com/ipfs/go-ipfs/core/commands/unixfs"
 
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	logging "gx/ipfs/QmcuXC5cxs79ro2cUuHs4HQ2bkDLJUYokwL8aivcX6HW3C/go-log"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	logging "github.com/ipfs/go-log"
 )
 
 var log = logging.Logger("core/commands")
@@ -28,7 +29,7 @@ const (
 var Root = &cmds.Command{
 	Helptext: cmdkit.HelpText{
 		Tagline:  "Global p2p merkle-dag filesystem.",
-		Synopsis: "ipfs [--config=<config> | -c] [--debug=<debug> | -D] [--help=<help>] [-h=<h>] [--local=<local> | -L] [--api=<api>] <command> ...",
+		Synopsis: "ipfs [--config=<config> | -c] [--debug | -D] [--help] [-h] [--api=<api>] [--offline] [--cid-base=<base>] [--upgrade-cidv0-in-output] [--encoding=<encoding> | --enc] [--timeout=<timeout>] <command> ...",
 		Subcommands: `
 BASIC COMMANDS
   init          Initialize ipfs local configuration
@@ -71,6 +72,7 @@ TOOL COMMANDS
   update        Download and apply go-ipfs updates
   commands      List all available commands
   cid           Convert and discover properties of CIDs
+  log           Manage and show logs of running daemon
 
 Use 'ipfs <command> --help' to learn more about each command.
 
@@ -98,6 +100,9 @@ The CLI will exit with one of the following values:
 		cmdkit.StringOption(ApiOption, "Use a specific API instance (defaults to /ip4/127.0.0.1/tcp/5001)"),
 
 		// global options, added to every command
+		cmdenv.OptionCidBase,
+		cmdenv.OptionUpgradeCidV0InOutput,
+
 		cmds.OptionEncodingType,
 		cmds.OptionStreamChannels,
 		cmds.OptionTimeout,
@@ -155,6 +160,9 @@ var CommandsDaemonROCmd = CommandsCmd(RootRO)
 // RefsROCmd is `ipfs refs` command
 var RefsROCmd = &cmds.Command{}
 
+// VersionROCmd is `ipfs version` command (without deps).
+var VersionROCmd = &cmds.Command{}
+
 var rootROSubcommands = map[string]*cmds.Command{
 	"commands": CommandsDaemonROCmd,
 	"cat":      CatCmd,
@@ -187,24 +195,27 @@ var rootROSubcommands = map[string]*cmds.Command{
 		},
 	},
 	"resolve": ResolveCmd,
-	"version": VersionCmd,
 }
 
 func init() {
 	Root.ProcessHelp()
 	*RootRO = *Root
 
-	// sanitize readonly refs command
-	*RefsROCmd = *RefsCmd
-	RefsROCmd.Subcommands = map[string]*cmds.Command{}
-
 	// this was in the big map definition above before,
 	// but if we leave it there lgc.NewCommand will be executed
 	// before the value is updated (:/sanitize readonly refs command/)
+
+	// sanitize readonly refs command
+	*RefsROCmd = *RefsCmd
+	RefsROCmd.Subcommands = map[string]*cmds.Command{}
 	rootROSubcommands["refs"] = RefsROCmd
 
-	Root.Subcommands = rootSubcommands
+	// sanitize readonly version command (no need to expose precise deps)
+	*VersionROCmd = *VersionCmd
+	VersionROCmd.Subcommands = map[string]*cmds.Command{}
+	rootROSubcommands["version"] = VersionROCmd
 
+	Root.Subcommands = rootSubcommands
 	RootRO.Subcommands = rootROSubcommands
 }
 

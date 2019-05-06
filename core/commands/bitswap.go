@@ -7,13 +7,13 @@ import (
 	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
 	e "github.com/ipfs/go-ipfs/core/commands/e"
 
-	humanize "gx/ipfs/QmPSBJL4momYnE7DcUyk2DVhD6rH488ZmHBGLbxNdhU44K/go-humanize"
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	peer "gx/ipfs/QmY5Grm8pJdiSSVsYxx4uNRgweY72EmYwuSDbRnbFok3iY/go-libp2p-peer"
-	bitswap "gx/ipfs/QmYoGLuLwTUv1SYBmsw1EVNC9MyLVUxwxzXYtKgAGHyEfw/go-bitswap"
-	decision "gx/ipfs/QmYoGLuLwTUv1SYBmsw1EVNC9MyLVUxwxzXYtKgAGHyEfw/go-bitswap/decision"
-	cidutil "gx/ipfs/QmbfKu17LbMWyGUxHEUns9Wf5Dkm8PT6be4uPhTkk4YvaV/go-cidutil"
-	cmdkit "gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	humanize "github.com/dustin/go-humanize"
+	bitswap "github.com/ipfs/go-bitswap"
+	decision "github.com/ipfs/go-bitswap/decision"
+	cidutil "github.com/ipfs/go-cidutil"
+	cmdkit "github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	peer "github.com/libp2p/go-libp2p-peer"
 )
 
 var BitswapCmd = &cmds.Command{
@@ -50,7 +50,7 @@ Print out all blocks currently on the bitswap wantlist for the local peer.`,
 			return err
 		}
 
-		if !nd.OnlineMode() {
+		if !nd.IsOnline {
 			return ErrNotOnline
 		}
 
@@ -74,21 +74,33 @@ Print out all blocks currently on the bitswap wantlist for the local peer.`,
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *KeyList) error {
+			enc, err := cmdenv.GetLowLevelCidEncoder(req)
+			if err != nil {
+				return err
+			}
 			// sort the keys first
 			cidutil.Sort(out.Keys)
 			for _, key := range out.Keys {
-				fmt.Fprintln(w, key)
+				fmt.Fprintln(w, enc.Encode(key))
 			}
-
 			return nil
 		}),
 	},
 }
 
+const (
+	bitswapVerboseOptionName = "verbose"
+	bitswapHumanOptionName   = "human"
+)
+
 var bitswapStatCmd = &cmds.Command{
 	Helptext: cmdkit.HelpText{
 		Tagline:          "Show some diagnostic information on the bitswap agent.",
 		ShortDescription: ``,
+	},
+	Options: []cmdkit.Option{
+		cmdkit.BoolOption(bitswapVerboseOptionName, "v", "Print extra information"),
+		cmdkit.BoolOption(bitswapHumanOptionName, "Print sizes in human readable format (e.g., 1K 234M 2G)"),
 	},
 	Type: bitswap.Stat{},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
@@ -97,7 +109,7 @@ var bitswapStatCmd = &cmds.Command{
 			return err
 		}
 
-		if !nd.OnlineMode() {
+		if !nd.IsOnline {
 			return cmdkit.Errorf(cmdkit.ErrClient, ErrNotOnline.Error())
 		}
 
@@ -115,21 +127,40 @@ var bitswapStatCmd = &cmds.Command{
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, s *bitswap.Stat) error {
+			enc, err := cmdenv.GetLowLevelCidEncoder(req)
+			if err != nil {
+				return err
+			}
+			verbose, _ := req.Options[bitswapVerboseOptionName].(bool)
+			human, _ := req.Options[bitswapHumanOptionName].(bool)
+
 			fmt.Fprintln(w, "bitswap status")
 			fmt.Fprintf(w, "\tprovides buffer: %d / %d\n", s.ProvideBufLen, bitswap.HasBlockBufferSize)
 			fmt.Fprintf(w, "\tblocks received: %d\n", s.BlocksReceived)
 			fmt.Fprintf(w, "\tblocks sent: %d\n", s.BlocksSent)
-			fmt.Fprintf(w, "\tdata received: %d\n", s.DataReceived)
-			fmt.Fprintf(w, "\tdata sent: %d\n", s.DataSent)
+			if human {
+				fmt.Fprintf(w, "\tdata received: %s\n", humanize.Bytes(s.DataReceived))
+				fmt.Fprintf(w, "\tdata sent: %s\n", humanize.Bytes(s.DataSent))
+			} else {
+				fmt.Fprintf(w, "\tdata received: %d\n", s.DataReceived)
+				fmt.Fprintf(w, "\tdata sent: %d\n", s.DataSent)
+			}
 			fmt.Fprintf(w, "\tdup blocks received: %d\n", s.DupBlksReceived)
-			fmt.Fprintf(w, "\tdup data received: %s\n", humanize.Bytes(s.DupDataReceived))
+			if human {
+				fmt.Fprintf(w, "\tdup data received: %s\n", humanize.Bytes(s.DupDataReceived))
+			} else {
+				fmt.Fprintf(w, "\tdup data received: %d\n", s.DupDataReceived)
+			}
 			fmt.Fprintf(w, "\twantlist [%d keys]\n", len(s.Wantlist))
 			for _, k := range s.Wantlist {
-				fmt.Fprintf(w, "\t\t%s\n", k.String())
+				fmt.Fprintf(w, "\t\t%s\n", enc.Encode(k))
 			}
+
 			fmt.Fprintf(w, "\tpartners [%d]\n", len(s.Peers))
-			for _, p := range s.Peers {
-				fmt.Fprintf(w, "\t\t%s\n", p)
+			if verbose {
+				for _, p := range s.Peers {
+					fmt.Fprintf(w, "\t\t%s\n", p)
+				}
 			}
 
 			return nil
@@ -156,7 +187,7 @@ prints the ledger associated with a given peer.
 			return err
 		}
 
-		if !nd.OnlineMode() {
+		if !nd.IsOnline {
 			return ErrNotOnline
 		}
 
@@ -199,7 +230,7 @@ Trigger reprovider to announce our data to network.
 			return err
 		}
 
-		if !nd.OnlineMode() {
+		if !nd.IsOnline {
 			return ErrNotOnline
 		}
 

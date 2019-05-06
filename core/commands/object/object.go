@@ -9,14 +9,15 @@ import (
 	"text/tabwriter"
 
 	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	coreiface "github.com/ipfs/go-ipfs/core/coreapi/interface"
-	"github.com/ipfs/go-ipfs/core/coreapi/interface/options"
 
-	"gx/ipfs/QmR8BauakNcBa3RbE4nbQu76PDiJgoQgz8AJdhJuiU4TAw/go-cid"
-	dag "gx/ipfs/QmTQdH4848iTVCJmKXYyRiK72HufWTLYQQ8iN3JaQ8K1Hq/go-merkledag"
-	"gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	humanize "github.com/dustin/go-humanize"
+	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmds"
+	ipld "github.com/ipfs/go-ipld-format"
+	dag "github.com/ipfs/go-merkledag"
+	"github.com/ipfs/interface-go-ipfs-core/options"
+	path "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 type Node struct {
@@ -35,6 +36,16 @@ type Object struct {
 }
 
 var ErrDataEncoding = errors.New("unkown data field encoding")
+
+const (
+	headersOptionName      = "headers"
+	encodingOptionName     = "data-encoding"
+	inputencOptionName     = "inputenc"
+	datafieldencOptionName = "datafieldenc"
+	pinOptionName          = "pin"
+	quietOptionName        = "quiet"
+	humanOptionName        = "human"
+)
 
 var ObjectCmd = &cmds.Command{
 	Helptext: cmdkit.HelpText{
@@ -82,10 +93,7 @@ is the raw data of the object.
 			return err
 		}
 
-		path, err := coreiface.ParsePath(req.Arguments[0])
-		if err != nil {
-			return err
-		}
+		path := path.New(req.Arguments[0])
 
 		data, err := api.Object().Data(req.Context, path)
 		if err != nil {
@@ -111,7 +119,7 @@ multihash.
 		cmdkit.StringArg("key", true, false, "Key of the object to retrieve, in base58-encoded multihash format.").EnableStdin(),
 	},
 	Options: []cmdkit.Option{
-		cmdkit.BoolOption("headers", "v", "Print table headers (Hash, Size, Name)."),
+		cmdkit.BoolOption(headersOptionName, "v", "Print table headers (Hash, Size, Name)."),
 	},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
 		api, err := cmdenv.GetApi(env, req)
@@ -119,10 +127,12 @@ multihash.
 			return err
 		}
 
-		path, err := coreiface.ParsePath(req.Arguments[0])
+		enc, err := cmdenv.GetLowLevelCidEncoder(req)
 		if err != nil {
 			return err
 		}
+
+		path := path.New(req.Arguments[0])
 
 		rp, err := api.ResolvePath(req.Context, path)
 		if err != nil {
@@ -137,14 +147,14 @@ multihash.
 		outLinks := make([]Link, len(links))
 		for i, link := range links {
 			outLinks[i] = Link{
-				Hash: link.Cid.String(),
+				Hash: enc.Encode(link.Cid),
 				Name: link.Name,
 				Size: link.Size,
 			}
 		}
 
 		out := &Object{
-			Hash:  rp.Cid().String(),
+			Hash:  enc.Encode(rp.Cid()),
 			Links: outLinks,
 		}
 
@@ -153,7 +163,7 @@ multihash.
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {
 			tw := tabwriter.NewWriter(w, 1, 2, 1, ' ', 0)
-			headers, _ := req.Options["headers"].(bool)
+			headers, _ := req.Options[headersOptionName].(bool)
 			if headers {
 				fmt.Fprintln(tw, "Hash\tSize\tName")
 			}
@@ -201,7 +211,7 @@ Supported values are:
 		cmdkit.StringArg("key", true, false, "Key of the object to retrieve, in base58-encoded multihash format.").EnableStdin(),
 	},
 	Options: []cmdkit.Option{
-		cmdkit.StringOption("data-encoding", "Encoding type of the data field, either \"text\" or \"base64\".").WithDefault("text"),
+		cmdkit.StringOption(encodingOptionName, "Encoding type of the data field, either \"text\" or \"base64\".").WithDefault("text"),
 	},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
 		api, err := cmdenv.GetApi(env, req)
@@ -209,12 +219,14 @@ Supported values are:
 			return err
 		}
 
-		path, err := coreiface.ParsePath(req.Arguments[0])
+		enc, err := cmdenv.GetLowLevelCidEncoder(req)
 		if err != nil {
 			return err
 		}
 
-		datafieldenc, _ := req.Options["data-encoding"].(string)
+		path := path.New(req.Arguments[0])
+
+		datafieldenc, _ := req.Options[encodingOptionName].(string)
 		if err != nil {
 			return err
 		}
@@ -246,7 +258,7 @@ Supported values are:
 
 		for i, link := range nd.Links() {
 			node.Links[i] = Link{
-				Hash: link.Cid.String(),
+				Hash: enc.Encode(link.Cid),
 				Name: link.Name,
 				Size: link.Size,
 			}
@@ -293,24 +305,27 @@ var ObjectStatCmd = &cmds.Command{
 	Arguments: []cmdkit.Argument{
 		cmdkit.StringArg("key", true, false, "Key of the object to retrieve, in base58-encoded multihash format.").EnableStdin(),
 	},
+	Options: []cmdkit.Option{
+		cmdkit.BoolOption(humanOptionName, "Print sizes in human readable format (e.g., 1K 234M 2G)"),
+	},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
 		api, err := cmdenv.GetApi(env, req)
 		if err != nil {
 			return err
 		}
 
-		path, err := coreiface.ParsePath(req.Arguments[0])
+		enc, err := cmdenv.GetLowLevelCidEncoder(req)
 		if err != nil {
 			return err
 		}
 
-		ns, err := api.Object().Stat(req.Context, path)
+		ns, err := api.Object().Stat(req.Context, path.New(req.Arguments[0]))
 		if err != nil {
 			return err
 		}
 
 		oldStat := &ipld.NodeStat{
-			Hash:           ns.Cid.String(),
+			Hash:           enc.Encode(ns.Cid),
 			NumLinks:       ns.NumLinks,
 			BlockSize:      ns.BlockSize,
 			LinksSize:      ns.LinksSize,
@@ -323,14 +338,21 @@ var ObjectStatCmd = &cmds.Command{
 	Type: ipld.NodeStat{},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *ipld.NodeStat) error {
+			wtr := tabwriter.NewWriter(w, 0, 0, 1, ' ', 0)
+			defer wtr.Flush()
 			fw := func(s string, n int) {
-				fmt.Fprintf(w, "%s: %d\n", s, n)
+				fmt.Fprintf(wtr, "%s:\t%d\n", s, n)
 			}
+			human, _ := req.Options[humanOptionName].(bool)
 			fw("NumLinks", out.NumLinks)
 			fw("BlockSize", out.BlockSize)
 			fw("LinksSize", out.LinksSize)
 			fw("DataSize", out.DataSize)
-			fw("CumulativeSize", out.CumulativeSize)
+			if human {
+				fmt.Fprintf(wtr, "%s:\t%s\n", "CumulativeSize", humanize.Bytes(uint64(out.CumulativeSize)))
+			} else {
+				fw("CumulativeSize", out.CumulativeSize)
+			}
 
 			return nil
 		}),
@@ -380,13 +402,18 @@ And then run:
 		cmdkit.FileArg("data", true, false, "Data to be stored as a DAG object.").EnableStdin(),
 	},
 	Options: []cmdkit.Option{
-		cmdkit.StringOption("inputenc", "Encoding type of input data. One of: {\"protobuf\", \"json\"}.").WithDefault("json"),
-		cmdkit.StringOption("datafieldenc", "Encoding type of the data field, either \"text\" or \"base64\".").WithDefault("text"),
-		cmdkit.BoolOption("pin", "Pin this object when adding."),
-		cmdkit.BoolOption("quiet", "q", "Write minimal output."),
+		cmdkit.StringOption(inputencOptionName, "Encoding type of input data. One of: {\"protobuf\", \"json\"}.").WithDefault("json"),
+		cmdkit.StringOption(datafieldencOptionName, "Encoding type of the data field, either \"text\" or \"base64\".").WithDefault("text"),
+		cmdkit.BoolOption(pinOptionName, "Pin this object when adding."),
+		cmdkit.BoolOption(quietOptionName, "q", "Write minimal output."),
 	},
 	Run: func(req *cmds.Request, res cmds.ResponseEmitter, env cmds.Environment) error {
 		api, err := cmdenv.GetApi(env, req)
+		if err != nil {
+			return err
+		}
+
+		enc, err := cmdenv.GetLowLevelCidEncoder(req)
 		if err != nil {
 			return err
 		}
@@ -396,17 +423,17 @@ And then run:
 			return err
 		}
 
-		inputenc, _ := req.Options["inputenc"].(string)
+		inputenc, _ := req.Options[inputencOptionName].(string)
 		if err != nil {
 			return err
 		}
 
-		datafieldenc, _ := req.Options["datafieldenc"].(string)
+		datafieldenc, _ := req.Options[datafieldencOptionName].(string)
 		if err != nil {
 			return err
 		}
 
-		dopin, _ := req.Options["pin"].(bool)
+		dopin, _ := req.Options[pinOptionName].(bool)
 		if err != nil {
 			return err
 		}
@@ -419,11 +446,11 @@ And then run:
 			return err
 		}
 
-		return cmds.EmitOnce(res, &Object{Hash: p.Cid().String()})
+		return cmds.EmitOnce(res, &Object{Hash: enc.Encode(p.Cid())})
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {
-			quiet, _ := req.Options["quiet"].(bool)
+			quiet, _ := req.Options[quietOptionName].(bool)
 
 			o := out.Hash
 			if !quiet {
@@ -464,6 +491,11 @@ Available templates:
 			return err
 		}
 
+		enc, err := cmdenv.GetLowLevelCidEncoder(req)
+		if err != nil {
+			return err
+		}
+
 		template := "empty"
 		if len(req.Arguments) == 1 {
 			template = req.Arguments[0]
@@ -474,7 +506,7 @@ Available templates:
 			return err
 		}
 
-		return cmds.EmitOnce(res, &Object{Hash: nd.Cid().String()})
+		return cmds.EmitOnce(res, &Object{Hash: enc.Encode(nd.Cid())})
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *Object) error {

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"unicode"
 
-	cid "gx/ipfs/QmR8BauakNcBa3RbE4nbQu76PDiJgoQgz8AJdhJuiU4TAw/go-cid"
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	verifcid "gx/ipfs/QmYMQuypUbgsdNHmuCBSUJV6wdQVsBHRivNAp3efHJwZJD/go-verifcid"
-	cidutil "gx/ipfs/QmbfKu17LbMWyGUxHEUns9Wf5Dkm8PT6be4uPhTkk4YvaV/go-cidutil"
-	cmdkit "gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
-	mbase "gx/ipfs/QmekxXDhCxCJRNuzmHreuaT3BsuJcsjcXWNrtV9C8DRHtd/go-multibase"
-	mhash "gx/ipfs/QmerPMzPk1mJVowm8KgmoknWa4yCYvvugMPsgWmDNUvDLW/go-multihash"
+	cid "github.com/ipfs/go-cid"
+	cidutil "github.com/ipfs/go-cidutil"
+	cmdkit "github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	verifcid "github.com/ipfs/go-verifcid"
+	mbase "github.com/multiformats/go-multibase"
+	mhash "github.com/multiformats/go-multihash"
 )
 
 var CidCmd = &cmds.Command{
@@ -239,8 +239,7 @@ var basesCmd = &cmds.Command{
 		for code, name := range mbase.EncodingToStr {
 			res = append(res, CodeAndName{int(code), name})
 		}
-		cmds.EmitOnce(resp, res)
-		return nil
+		return cmds.EmitOnce(resp, res)
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, val []CodeAndName) error {
@@ -287,8 +286,7 @@ var codecsCmd = &cmds.Command{
 		for code, name := range cid.CodecToStr {
 			res = append(res, CodeAndName{int(code), name})
 		}
-		cmds.EmitOnce(resp, res)
-		return nil
+		return cmds.EmitOnce(resp, res)
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, val []CodeAndName) error {
@@ -321,8 +319,7 @@ var hashesCmd = &cmds.Command{
 			}
 			res = append(res, CodeAndName{int(code), name})
 		}
-		cmds.EmitOnce(resp, res)
-		return nil
+		return cmds.EmitOnce(resp, res)
 	},
 	Encoders: codecsCmd.Encoders,
 	Type:     codecsCmd.Type,

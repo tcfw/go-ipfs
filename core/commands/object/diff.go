@@ -5,11 +5,11 @@ import (
 	"io"
 
 	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	coreiface "github.com/ipfs/go-ipfs/core/coreapi/interface"
 	"github.com/ipfs/go-ipfs/dagutils"
 
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	cmdkit "gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	cmdkit "github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	path "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 const (
@@ -60,18 +60,8 @@ Example:
 			return err
 		}
 
-		a := req.Arguments[0]
-		b := req.Arguments[1]
-
-		pa, err := coreiface.ParsePath(a)
-		if err != nil {
-			return err
-		}
-
-		pb, err := coreiface.ParsePath(b)
-		if err != nil {
-			return err
-		}
+		pa := path.New(req.Arguments[0])
+		pb := path.New(req.Arguments[1])
 
 		changes, err := api.Object().Diff(req.Context, pa, pb)
 		if err != nil {

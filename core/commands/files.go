@@ -12,20 +12,22 @@ import (
 
 	"github.com/ipfs/go-ipfs/core"
 	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/coreapi/interface"
 
-	"gx/ipfs/QmP9eu5X5Ax8169jNWqAJcc42mdZgzLR1aKCEzqhNoBLKk/go-mfs"
-	"gx/ipfs/QmPSBJL4momYnE7DcUyk2DVhD6rH488ZmHBGLbxNdhU44K/go-humanize"
-	ft "gx/ipfs/QmQXze9tG878pa4Euya4rrDpyTNX3kQe4dhCaBzBozGgpe/go-unixfs"
-	"gx/ipfs/QmR8BauakNcBa3RbE4nbQu76PDiJgoQgz8AJdhJuiU4TAw/go-cid"
-	dag "gx/ipfs/QmTQdH4848iTVCJmKXYyRiK72HufWTLYQQ8iN3JaQ8K1Hq/go-merkledag"
-	"gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	bservice "gx/ipfs/QmYPZzd9VqmJDwxUnThfeSbV1Y5o53aVPDijTB7j7rS9Ep/go-blockservice"
-	"gx/ipfs/QmYZwey1thDTynSrvd6qQkX24UpTka6TFhQ2v569UpoqxD/go-ipfs-exchange-offline"
-	ipld "gx/ipfs/QmcKKBwfz6FyQdHR2jsXrrF6XeSBXYL86anmWNewpFpoF5/go-ipld-format"
-	logging "gx/ipfs/QmcuXC5cxs79ro2cUuHs4HQ2bkDLJUYokwL8aivcX6HW3C/go-log"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
-	mh "gx/ipfs/QmerPMzPk1mJVowm8KgmoknWa4yCYvvugMPsgWmDNUvDLW/go-multihash"
+	"github.com/dustin/go-humanize"
+	bservice "github.com/ipfs/go-blockservice"
+	cid "github.com/ipfs/go-cid"
+	cidenc "github.com/ipfs/go-cidutil/cidenc"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-exchange-offline"
+	ipld "github.com/ipfs/go-ipld-format"
+	logging "github.com/ipfs/go-log"
+	dag "github.com/ipfs/go-merkledag"
+	"github.com/ipfs/go-mfs"
+	ft "github.com/ipfs/go-unixfs"
+	"github.com/ipfs/interface-go-ipfs-core"
+	path "github.com/ipfs/interface-go-ipfs-core/path"
+	mh "github.com/multiformats/go-multihash"
 )
 
 var flog = logging.Logger("cmds/files")
@@ -136,6 +138,11 @@ var filesStatCmd = &cmds.Command{
 
 		withLocal, _ := req.Options[filesWithLocalOptionName].(bool)
 
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
+
 		var dagserv ipld.DAGService
 		if withLocal {
 			// an offline DAGService will not fetch from the network
@@ -152,7 +159,7 @@ var filesStatCmd = &cmds.Command{
 			return err
 		}
 
-		o, err := statNode(nd)
+		o, err := statNode(nd, enc)
 		if err != nil {
 			return err
 		}
@@ -162,6 +169,9 @@ var filesStatCmd = &cmds.Command{
 		}
 
 		local, sizeLocal, err := walkBlock(req.Context, dagserv, nd)
+		if err != nil {
+			return err
+		}
 
 		o.WithLocality = true
 		o.Local = local
@@ -217,7 +227,7 @@ func statGetFormatOptions(req *cmds.Request) (string, error) {
 	}
 }
 
-func statNode(nd ipld.Node) (*statOutput, error) {
+func statNode(nd ipld.Node, enc cidenc.Encoder) (*statOutput, error) {
 	c := nd.Cid()
 
 	cumulsize, err := nd.Size()
@@ -243,7 +253,7 @@ func statNode(nd ipld.Node) (*statOutput, error) {
 		}
 
 		return &statOutput{
-			Hash:           c.String(),
+			Hash:           enc.Encode(c),
 			Blocks:         len(nd.Links()),
 			Size:           d.FileSize(),
 			CumulativeSize: cumulsize,
@@ -251,7 +261,7 @@ func statNode(nd ipld.Node) (*statOutput, error) {
 		}, nil
 	case *dag.RawNode:
 		return &statOutput{
-			Hash:           c.String(),
+			Hash:           enc.Encode(c),
 			Blocks:         0,
 			Size:           cumulsize,
 			CumulativeSize: cumulsize,
@@ -341,7 +351,7 @@ var filesCpCmd = &cmds.Command{
 		}
 
 		if flush {
-			err := mfs.FlushPath(nd.FilesRoot, dst)
+			_, err := mfs.FlushPath(req.Context, nd.FilesRoot, dst)
 			if err != nil {
 				return fmt.Errorf("cp: cannot flush the created file %s: %s", dst, err)
 			}
@@ -354,12 +364,7 @@ var filesCpCmd = &cmds.Command{
 func getNodeFromPath(ctx context.Context, node *core.IpfsNode, api iface.CoreAPI, p string) (ipld.Node, error) {
 	switch {
 	case strings.HasPrefix(p, "/ipfs/"):
-		np, err := iface.ParsePath(p)
-		if err != nil {
-			return nil, err
-		}
-
-		return api.ResolveNode(ctx, np)
+		return api.ResolveNode(ctx, path.New(p))
 	default:
 		fsn, err := mfs.Lookup(node.FilesRoot, p)
 		if err != nil {
@@ -433,6 +438,11 @@ Examples:
 
 		long, _ := req.Options[longOptionName].(bool)
 
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
+
 		switch fsn := fsn.(type) {
 		case *mfs.Directory:
 			if !long {
@@ -470,7 +480,7 @@ Examples:
 				if err != nil {
 					return err
 				}
-				out.Entries[0].Hash = nd.Cid().String()
+				out.Entries[0].Hash = enc.Encode(nd.Cid())
 			}
 			return cmds.EmitOnce(res, out)
 		default:
@@ -625,6 +635,8 @@ Example:
 			return err
 		}
 
+		flush, _ := req.Options[filesFlushOptionName].(bool)
+
 		src, err := checkPath(req.Arguments[0])
 		if err != nil {
 			return err
@@ -634,7 +646,11 @@ Example:
 			return err
 		}
 
-		return mfs.Mv(nd.FilesRoot, src, dst)
+		err = mfs.Mv(nd.FilesRoot, src, dst)
+		if err == nil && flush {
+			_, err = mfs.FlushPath(req.Context, nd.FilesRoot, "/")
+		}
+		return err
 	},
 }
 
@@ -839,6 +855,10 @@ Examples:
 	},
 }
 
+type flushRes struct {
+	Cid string
+}
+
 var filesFlushCmd = &cmds.Command{
 	Helptext: cmdkit.HelpText{
 		Tagline: "Flush a given path's data to disk.",
@@ -856,13 +876,24 @@ are run with the '--flush=false'.
 			return err
 		}
 
+		enc, err := cmdenv.GetCidEncoder(req)
+		if err != nil {
+			return err
+		}
+
 		path := "/"
 		if len(req.Arguments) > 0 {
 			path = req.Arguments[0]
 		}
 
-		return mfs.FlushPath(nd.FilesRoot, path)
+		n, err := mfs.FlushPath(req.Context, nd.FilesRoot, path)
+		if err != nil {
+			return err
+		}
+
+		return cmds.EmitOnce(res, &flushRes{enc.Encode(n.Cid())})
 	},
+	Type: flushRes{},
 }
 
 var filesChcidCmd = &cmds.Command{
@@ -897,11 +928,15 @@ Change the cid version or hash function of the root node of a given path.
 			return err
 		}
 
-		return updatePath(nd.FilesRoot, path, prefix, flush)
+		err = updatePath(nd.FilesRoot, path, prefix)
+		if err == nil && flush {
+			_, err = mfs.FlushPath(req.Context, nd.FilesRoot, path)
+		}
+		return err
 	},
 }
 
-func updatePath(rt *mfs.Root, pth string, builder cid.Builder, flush bool) error {
+func updatePath(rt *mfs.Root, pth string, builder cid.Builder) error {
 	if builder == nil {
 		return nil
 	}
@@ -916,10 +951,6 @@ func updatePath(rt *mfs.Root, pth string, builder cid.Builder, flush bool) error
 		n.SetCidBuilder(builder)
 	default:
 		return fmt.Errorf("can only update directories")
-	}
-
-	if flush {
-		nd.Flush()
 	}
 
 	return nil

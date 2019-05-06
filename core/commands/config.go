@@ -14,10 +14,10 @@ import (
 	"github.com/ipfs/go-ipfs/repo"
 	"github.com/ipfs/go-ipfs/repo/fsrepo"
 
-	"gx/ipfs/QmP2i47tnU23ijdshrZtuvrSkQPtf9HhsMb9fwGVe8owj2/jsondiff"
-	"gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	"gx/ipfs/QmcRKBUqc2p3L1ZraoJjbXfs9E6xzvEuyK9iypb5RGwfsr/go-ipfs-config"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/elgris/jsondiff"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-config"
 )
 
 // ConfigUpdateOutput is config profile apply command's output
@@ -32,8 +32,9 @@ type ConfigField struct {
 }
 
 const (
-	configBoolOptionName = "bool"
-	configJSONOptionName = "json"
+	configBoolOptionName   = "bool"
+	configJSONOptionName   = "json"
+	configDryRunOptionName = "dry-run"
 )
 
 var ConfigCmd = &cmds.Command{
@@ -82,7 +83,7 @@ Set the value of the 'Datastore.Path' key:
 		// This is a temporary fix until we move the private key out of the config file
 		switch strings.ToLower(key) {
 		case "identity", "identity.privkey":
-			return fmt.Errorf("cannot show or change private key through API")
+			return errors.New("cannot show or change private key through API")
 		default:
 		}
 
@@ -119,7 +120,7 @@ Set the value of the 'Datastore.Path' key:
 			return err
 		}
 
-		return res.Emit(output)
+		return cmds.EmitOnce(res, output)
 	},
 	Encoders: cmds.EncoderMap{
 		cmds.Text: cmds.MakeTypedEncoder(func(req *cmds.Request, w io.Writer, out *ConfigField) error {
@@ -133,8 +134,8 @@ Set the value of the 'Datastore.Path' key:
 			}
 			buf = append(buf, byte('\n'))
 
-			w.Write(buf)
-			return nil
+			_, err = w.Write(buf)
+			return err
 		}),
 	},
 	Type: ConfigField{},
@@ -184,9 +185,8 @@ NOTE: For security reasons, this command will omit your private key. If you woul
 				return err
 			}
 			buf = append(buf, byte('\n'))
-			w.Write(buf)
-
-			return nil
+			_, err = w.Write(buf)
+			return err
 		}),
 	},
 }
@@ -207,7 +207,7 @@ func scrubValue(m map[string]interface{}, key []string) error {
 	for _, k := range key[:len(key)-1] {
 		foundk, val, ok := find(cur, k)
 		if !ok {
-			return fmt.Errorf("failed to find specified key")
+			return errors.New("failed to find specified key")
 		}
 
 		if foundk != k {
@@ -309,7 +309,7 @@ var configProfileApplyCmd = &cmds.Command{
 		Tagline: "Apply profile to config.",
 	},
 	Options: []cmdkit.Option{
-		cmdkit.BoolOption("dry-run", "print difference between the current config and the config that would be generated"),
+		cmdkit.BoolOption(configDryRunOptionName, "print difference between the current config and the config that would be generated"),
 	},
 	Arguments: []cmdkit.Argument{
 		cmdkit.StringArg("profile", true, false, "The profile to apply to the config."),
@@ -320,7 +320,7 @@ var configProfileApplyCmd = &cmds.Command{
 			return fmt.Errorf("%s is not a profile", req.Arguments[0])
 		}
 
-		dryRun, _ := req.Options["dry-run"].(bool)
+		dryRun, _ := req.Options[configDryRunOptionName].(bool)
 		cfgRoot, err := cmdenv.GetConfigRoot(env)
 		if err != nil {
 			return err
@@ -351,9 +351,8 @@ var configProfileApplyCmd = &cmds.Command{
 			diff := jsondiff.Compare(out.OldCfg, out.NewCfg)
 			buf := jsondiff.Format(diff)
 
-			w.Write(buf)
-
-			return nil
+			_, err := w.Write(buf)
+			return err
 		}),
 	},
 	Type: ConfigUpdateOutput{},
@@ -473,12 +472,12 @@ func replaceConfig(r repo.Repo, file io.Reader) error {
 
 	keyF, err := getConfig(r, config.PrivKeySelector)
 	if err != nil {
-		return fmt.Errorf("failed to get PrivKey")
+		return errors.New("failed to get PrivKey")
 	}
 
 	pkstr, ok := keyF.Value.(string)
 	if !ok {
-		return fmt.Errorf("private key in config was not a string")
+		return errors.New("private key in config was not a string")
 	}
 
 	cfg.Identity.PrivKey = pkstr

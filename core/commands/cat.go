@@ -7,11 +7,12 @@ import (
 	"os"
 
 	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/coreapi/interface"
 
-	cmds "gx/ipfs/QmWGm4AbZEbnmdgVTza52MSNpEmBdFVqzmAysRbjrRyGbH/go-ipfs-cmds"
-	"gx/ipfs/QmXWZCd8jfaHmt4UDSnjKmGcrQMw95bDGWqEeVLVJjoANX/go-ipfs-files"
-	"gx/ipfs/Qmde5VP1qUkyQXKCfmEUA7bP64V2HAptbJ7phuPp7jXWwg/go-ipfs-cmdkit"
+	"github.com/ipfs/go-ipfs-cmdkit"
+	cmds "github.com/ipfs/go-ipfs-cmds"
+	"github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/interface-go-ipfs-core"
+	"github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 const (
@@ -118,19 +119,19 @@ func cat(ctx context.Context, api iface.CoreAPI, paths []string, offset int64, m
 		return nil, 0, nil
 	}
 	for _, p := range paths {
-		fpath, err := iface.ParsePath(p)
+		f, err := api.Unixfs().Get(ctx, path.New(p))
 		if err != nil {
 			return nil, 0, err
 		}
 
-		f, err := api.Unixfs().Get(ctx, fpath)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		file, ok := f.(files.File)
-		if !ok {
-			return nil, 0, iface.ErrNotFile
+		var file files.File
+		switch f := f.(type) {
+		case files.File:
+			file = f
+		case files.Directory:
+			return nil, 0, iface.ErrIsDir
+		default:
+			return nil, 0, iface.ErrNotSupported
 		}
 
 		fsize, err := file.Size()
